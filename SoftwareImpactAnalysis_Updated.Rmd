@@ -109,7 +109,7 @@ freq_tab_full <- wdat %>%
                 options = list(columnDefs = list(list(className = 'dt-center', targets = "_all"))))
 ```
 
-## REDEFINE total metntions using only (Allusion+Deposition+Usage)
+## REDEFINE total mentions using only (Allusion+Deposition+Usage)
 ```{r}
 freq_tab_full_redefined <- wdat %>% 
   ## We filter out the Creations 
