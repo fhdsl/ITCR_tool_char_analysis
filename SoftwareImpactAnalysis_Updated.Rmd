@@ -1,0 +1,588 @@
+---
+title: "Software Impact Data Analysis: Updated"
+subtitle: "General trends and exploratory stats"
+author: "Awan"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: cosmo
+    highlight: pygments
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,  fig.align='center')
+## Required packages
+library(tidyverse)
+library(magrittr)
+library(DT)
+library(scales)
+library(patchwork) ## plot side by side
+```
+
+
+## Part I: Data loading and check
+
+```{r loadData, echo=TRUE}
+## Load data file1: The Software Impact Dataset from John
+wdat <- read.table(file='itcr_softwarekg_articles.tsv', sep = '\t', header = TRUE, fill = TRUE) %>% 
+  rename(toolName = name_from_itcr_simplified) %>% 
+  mutate(toolName = str_trim(toolName))
+
+## Tool Analysis dataset, modified version with all the edited/recoded variables
+tdat <- read_csv(file = "tdat_edited.csv", show_col_types = FALSE)  %>% 
+  rename(toolName = `tool name`) %>% 
+  mutate(toolName = str_trim(toolName))
+```
+
+## Caveats with the data set
+
+- The definitions of each column type are as follows:
+  - **'name_in_reference'** is the specific spelling/capitalization used in the pubmed article
+  - **'name_from_itcr_simplified'** is the input key provided to the database (case insensitive word matching)
+  - **"usage"** is usage, **"allusion"** is a simple mention, like 'software xyz exists', 
+  - **"deposition"** and **"creation"** indicate statements about the development or release of the software, like 'we put xyz on github'
+  
+- The software that generated the data considered the names as case-sensitive. So, for example, "Galaxy", "GALAXY" were considered distinct.
+
+- Look at the following table for a specific article (ID: PMC4765054), 
+  - **name_in_reference** (column 3) shows that issue mentioned above. 
+  - However, **toolName** (column 7) is same for all 6 rows
+
+- Therefore, to generate the frequency table for **how many articles** cited a specific software, we need only keep the rows that are distinct in toolName and article (PMC IDs). 
+
+```{r issue1}
+wdat %>% filter(article == "PMC4765054") %>% arrange(name_in_reference) %>% select(-software) %>% 
+  DT::datatable(caption = htmltools::tags$caption("Case sensitivity and redundant rows", style = "color:red"))
+```
+
+- Keep in mind that, each article can mention two or more tools.
+
+```{r issue2}
+wdat %>% filter(article == "PMC4606501") %>% arrange(name_in_reference) %>% select(-software) %>% 
+  DT::datatable(caption = htmltools::tags$caption("Example of one article mentioning multiple tools", style = "color:red"))
+```
+
+```{r johnsTable}
+## As a measure of check,
+# ## Re-create the first table sent by John (case-sensitive rows merged)
+# wdat %>% 
+#   group_by(toolName) %>% 
+#   count(mentionType, wt = num_abs_mention) %>% 
+#   ungroup() %>% 
+#   pivot_wider(names_from = mentionType, values_from = n) 
+# # %>% summarize(across(.cols = where(is.numeric), .fns = sum, na.rm = TRUE) ) %>% sum
+
+# unique(wdat %>% select(article, toolName))
+```
+
+- There are **`r unique(wdat$article) %>% length()` unique articles** in the data set.
+
+## Frequency distribution of article mentions for each tool
+  
+```{r frequencyTab}
+## Overall frequency table (allusion or creation or deposition or usage)
+freq_tab <- wdat %>% group_by(toolName) %>% count(article) %>% ungroup() %>% 
+  count(toolName) 
+
+freq_tab %>% arrange(desc(n)) %>% rename(`Total article mentions` = n) %>% 
+  DT::datatable(caption = htmltools::tags$caption("Overall frequency table (allusion or creation or deposition or usage)", 
+                                                  style = "color:blue"),
+                options = list(columnDefs = list(list(className = 'dt-center', targets="_all"))))
+```
+
+## Frequency of different mode of mentions 
+
+- Note that the last four columns (Allusion, Creation, Deposition, Usage) **Need Not sum** to the total article mentions as one or more of these different type of mentions may have occurred for a speicific tool in each article. 
+
+```{r modesOfMentions}
+freq_tab_full <- wdat %>% 
+  group_by(toolName) %>% count(article, mentionType) %>% ungroup() %>% 
+  group_by(mentionType) %>% count(toolName) %>% ungroup() %>% arrange(toolName) %>% 
+  pivot_wider(names_from = mentionType, values_from = n) %>% 
+  right_join(freq_tab, by = "toolName") %>% relocate(n, .after = toolName) %>% 
+  arrange(desc(n)) %>% rename(`Total article mentions` = n) 
+
+ freq_tab_full %>% 
+  # %>% rowwise() %>% mutate(total = sum(Allusion+Creation+Deposition+Usage, na.rm = T))
+  DT::datatable(caption = htmltools::tags$caption("Frequency of different mode of mentions", style = "color:blue"),
+                options = list(columnDefs = list(list(className = 'dt-center', targets = "_all"))))
+```
+
+## REDEFINE total metntions using only (Allusion+Deposition+Usage)
+```{r}
+freq_tab_full_redefined <- wdat %>% 
+  ## We filter out the Creations 
+  filter(mentionType != "Creation") %>% 
+  group_by(toolName) %>% count(article, mentionType) %>% ungroup() %>% 
+  group_by(mentionType) %>% count(toolName) %>% ungroup() %>% arrange(toolName) %>% 
+  pivot_wider(names_from = mentionType, values_from = n) %>% 
+  right_join(freq_tab, by = "toolName") %>% relocate(n, .after = toolName) %>% 
+  arrange(desc(n)) %>% rename(`Total article mentions` = n) 
+
+## Use ^this freq_tab_full_redefined for the data merger
+```
+
+
+```{r mergerWithToolAnalysis}
+## Join ToolAnalysis data with SoftMention data
+## We consider QIIME 2 as QIIME for simplicity
+## mwdat = merged working data
+tdat_edited <- tdat %>% 
+  mutate(## Extract all the acronyms inside the parentheses
+         names_cut = str_extract_all(toolName, "\\([^()]+\\)") %>% substring(., 2, nchar(.)-1),
+         ## remove the nonsensical names_cut for names that did not contain acronyms inside the parentheses
+         names_cut = if_else(names_cut == "haracter(0", toolName, names_cut),
+         ## Keep only the first word in each name (since this is most common in the Software data)
+         names_cut = word(names_cut, 1),
+         ## Individually fix those who had standalone issues or problems with operations above
+         names_cut = case_when(names_cut == "AA" ~ "AmpliconArchitect",
+                               names_cut == "AR" ~ "AmpliconReconstructor",
+                               names_cut == "dcmqi:" ~ "dcmqi",
+                               names_cut == "PDX" ~ "PDXFinder",
+                               names_cut == "3D" ~ "3D Slicer",
+                               names_cut == "Pathway" ~ "Pathway Commons",
+                               names_cut == "UCSC" ~ "Xena",
+                               TRUE ~ names_cut),
+         ## remove any whitespaces before after names
+         names_cut = str_trim(names_cut)) %>% 
+  ## remove the original tool name variable and replace with newly generated names for merging
+  select(-toolName) %>% rename(toolName = names_cut) %>% relocate(toolName) 
+
+## merge with the smaller data set on the right (Update: Use the counts without creation)
+mwdat <- tdat_edited %>% 
+  right_join(freq_tab_full_redefined %>% rename(totalMentions = `Total article mentions`), by = "toolName")
+
+## Some helpful recoding
+mwdat %<>% mutate(citeHow = if_else(citeHow == "Yes", citeHow, "No"),
+                 TimeSinceLastUpdate_bin = if_else(TimeSinceLastUpdate < 2, "<= 1 year", "2+ years"),
+                 ## combine not working with limited: extensiveContact
+                 extensiveContact = if_else(extensiveContact == "NotWorking", "None", extensiveContact)
+                 )
+
+#mwdat %>% count(extensiveContact)
+```
+
+## Analyses
+
+### 1. Possible association between social media presence and log(totalMentions)
+
+- Note that we are using log-scaled data since the data is count-type and there is considerable variation in it.
+
+```{r socialMedia}
+## Marginal dist
+p1 <- mwdat %>% 
+  ggplot(aes(x = socialMedia, fill = fct_infreq(socialMedia))) + 
+  geom_bar(position = "dodge", width = .5, show.legend = F) + 
+  geom_text(stat = 'count', 
+            aes(label = paste0(after_stat(round(100*count/sum(count),1)), "%")), 
+            position = position_dodge(width = .9), vjust = 2, col = "white") +
+  labs(x = "Social Media Presence", y = "Frequency", subtitle = "Distribution of Social Media Presence") +
+  scale_y_continuous(n.breaks = 7) + 
+  scale_fill_brewer(palette = "Set1", direction = 1) +
+  theme_light() 
+
+p2 <- mwdat %>% 
+  ggplot(aes(x = socialMedia, y = log(totalMentions))) +
+  geom_boxplot(aes(fill = socialMedia),  width = 0.5, show.legend = F) +
+  scale_y_continuous(n.breaks = 6) + 
+  scale_fill_brewer(palette = "Set1", direction = 1) +
+  labs(x = "Social Media Presence", y = "log( total # of mentions)", 
+       subtitle = "Distribution of # of mentions (log scale)") +
+  theme_light() 
+
+p1 + p2
+```
+
+```{r}
+## Allusions
+p21 <- mwdat %>% filter(!is.na(Allusion)) %>% 
+  ggplot(aes(x = socialMedia, y = log(Allusion))) +
+  geom_boxplot(aes(fill = socialMedia),  width = 0.5, show.legend = F) +
+  scale_y_continuous(n.breaks = 6) + 
+  scale_fill_brewer(palette = "Set1", direction = 1) +
+  labs(x = "Social Media Presence", y = "log(Allusion)", subtitle = "Distribution of # of Allusion (log scale)") +
+  theme_light() + coord_flip()
+
+## Deposition
+p23 <- mwdat %>% filter(!is.na(Deposition)) %>% 
+  ggplot(aes(x = socialMedia, y = log(Deposition))) +
+  geom_boxplot(aes(fill = socialMedia),  width = 0.5, show.legend = F) +
+  scale_y_continuous(n.breaks = 6) + 
+  scale_fill_brewer(palette = "Set1", direction = 1) +
+  labs(x = "Social Media Presence", y = "log(Deposition)", 
+       subtitle = "Distribution of # of Deposition (log scale)") +
+  theme_light() + coord_flip()
+
+## Usage
+p24 <- mwdat %>% filter(!is.na(Usage)) %>% 
+  ggplot(aes(x = socialMedia, y = log(Usage))) +
+  geom_boxplot(aes(fill = socialMedia),  width = 0.5, show.legend = F) +
+  scale_y_continuous(n.breaks = 6) + 
+  scale_fill_brewer(palette = "Set1", direction = 1) +
+  labs(x = "Social Media Presence", y = "log(Usage)", subtitle = "Distribution of # of Usage (log scale)") +
+  theme_light() + coord_flip()
+
+(p21) / (p23 + p24)
+```
+
+- It appears the distribution of log-frequency (and hence the frequency) differs significantly. 
+- However, mention is a function of time as well. So we need to check whether adjusting age of tool affects this crude association.
+
+```{r warning=FALSE}
+## I found out the release years for the tools: Cytoscape (2002), RDriver (2017)
+regdat <- mwdat %>% 
+  mutate(releaseYear = case_when(toolName == "rDriver" ~ 2017, 
+                                 toolName == "Cytoscape" ~ 2002, 
+                                 TRUE ~ releaseYear),
+         ## Year 2022 is completed, hence those created in 2022 could be considered as Year 1 age
+         toolAge = 2023 - releaseYear,
+         ## Since this is only the beginning of 2023, we count up to the year 2022
+         TimeSinceLastUpdate = 2022 - updateYear)
+
+p3 <- regdat %>% 
+  ggplot(aes(x = releaseYear, y = log(totalMentions), col = socialMedia)) + 
+  geom_point(aes(shape = socialMedia)) + 
+  geom_smooth(method = "lm", se = F) +
+  labs(x = "Release Year", y = "log(total Mentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
+  theme_light() 
+
+p3
+```
+
+
+### An exploratory regression
+```{r regression}
+lm(log(totalMentions) ~ socialMedia, data = regdat) %>% broom::tidy() %>% 
+  mutate(across(.cols = where(is.numeric), .fns = ~round(.x, digits = 4))) %>% 
+  DT::datatable()
+
+lm(log(totalMentions) ~ socialMedia + toolAge, data = regdat) %>% broom::tidy() %>% 
+  mutate(across(.cols = where(is.numeric), .fns = ~round(.x, digits = 5))) %>% 
+  DT::datatable()
+```
+
+- Adjusting for Tool age (a translation of release Year) shows that social media presence is not significant. 
+- The variability is too high to conclude anything statistically. 
+
+
+## Stratification by: How to cite instruction (with BioConductor)
+
+```{r Howtocite}
+## Marginal dist
+p4 <- mwdat %>% 
+  ggplot(aes(x = citeHow, fill = fct_infreq(citeHow))) + 
+  geom_bar(position = "dodge", width = .5, show.legend = F) + 
+  geom_text(stat = 'count', 
+            aes(label = paste0(after_stat(round(100*count/sum(count),1)), "%")), 
+            position = position_dodge(width = .9), vjust = 2, col = "white") +
+  labs(x = "Instruction for citation", y = "Frequency", subtitle = "Distribution of Presence of Citation instructions") +
+  scale_y_continuous(n.breaks = 7) + 
+  scale_fill_brewer(palette = "Set1", direction = -1) +
+  theme_light() 
+
+p5 <- mwdat %>% 
+  ggplot(aes(x = citeHow, y = log(totalMentions))) +
+  geom_boxplot(aes(fill = citeHow),  width = 0.5, show.legend = F) +
+  scale_y_continuous(n.breaks = 6) + 
+  scale_fill_brewer(palette = "Set1", direction = 1) +
+  labs(x = "Instruction for citation", y = "log( total # of mentions)", 
+       subtitle = "Distribution of # of mentions (log scale)") +
+  theme_light() 
+
+p4 + p5
+```
+
+
+```{r}
+regdat %>% 
+  ggplot(aes(x = citeHow, y = log(totalMentions))) +
+  geom_boxplot(aes(fill = socialMedia),  width = 0.5, ) +
+  scale_y_continuous(n.breaks = 6) + 
+  #facet_wrap(~`class/type`) +
+  scale_fill_brewer(palette = "Set1", direction = 1) +
+  labs(x = "Instructions on how to cite?", y = "log( total # of mentions)", 
+       subtitle = "Distribution of # of mentions (log scale)") +
+  theme_light() +
+  theme(strip.background =element_rect(fill="steelblue3"),
+        strip.text = element_text(colour = 'white'), 
+        panel.grid = element_blank())
+
+lm(log(totalMentions) ~ socialMedia + citeHow + socialMedia:citeHow, data = regdat) %>% broom::tidy() %>% 
+  mutate(across(.cols = where(is.numeric), .fns = ~round(.x, digits = 5))) %>% 
+  DT::datatable()
+```
+
+- Note: It seems that Tool age is a very strong predictor of the log(mentions), and makes the other variables insignificant.
+
+## (NEW) Stratification by: How to cite instruction (WITHOUT BioConductor and other-R packages)
+
+```{r Howtocite_WITHOUT}
+## Marginal dist
+p41 <- mwdat %>% filter(`class/type` != c("Bioconductor R packages", "other R packages")) %>% 
+  ggplot(aes(x = citeHow, fill = fct_infreq(citeHow))) + 
+  geom_bar(position = "dodge", width = .5, show.legend = F) + 
+  geom_text(stat = 'count', 
+            aes(label = paste0(after_stat(round(100*count/sum(count),1)), "%")), 
+            position = position_dodge(width = .9), vjust = 1.2, col = "white") +
+  labs(x = "Instruction for citation", y = "Frequency", subtitle = "Distribution of Presence of Citation instructions") +
+  scale_y_continuous(n.breaks = 7) + 
+  scale_fill_brewer(palette = "Set1", direction = -1) +
+  theme_light() 
+
+p51 <- mwdat %>% filter(`class/type` != c("Bioconductor R packages", "other R packages")) %>% 
+  ggplot(aes(x = citeHow, y = log(totalMentions))) +
+  geom_boxplot(aes(fill = citeHow),  width = 0.5, show.legend = F) +
+  scale_y_continuous(n.breaks = 6) + 
+  scale_fill_brewer(palette = "Set1", direction = 1) +
+  labs(x = "Instruction for citation", y = "log( total # of mentions)", 
+       subtitle = "Distribution of # of mentions (log scale)") +
+  theme_light() 
+
+
+p61 <- regdat %>% filter(`class/type` != c("Bioconductor R packages", "other R packages")) %>% 
+  ggplot(aes(x = citeHow, y = log(totalMentions))) +
+  geom_boxplot(aes(fill = socialMedia),  width = 0.5, ) +
+  scale_y_continuous(n.breaks = 6) + 
+  #facet_wrap(~`class/type`) +
+  scale_fill_brewer(palette = "Set1", direction = 1) +
+  labs(x = "Instructions on how to cite?", y = "log( total # of mentions)", 
+       subtitle = "Distribution of # of mentions (log scale)") +
+  theme_light() +
+  theme(strip.background =element_rect(fill="steelblue3"),
+        strip.text = element_text(colour = 'white'), 
+        panel.grid = element_blank())
+
+(p41 + p51) /
+  p61
+```
+
+## Stratification by: extensiveContact
+
+```{r}
+regdat %>% mutate(extensiveContact = if_else(extensiveContact == "None", extensiveContact, "Yes")) %>% 
+  ggplot(aes(x = extensiveContact, y = log(totalMentions))) +
+  geom_boxplot(aes(fill = extensiveContact), width = 0.4, show.legend = F) +
+  scale_y_continuous(n.breaks = 6) + 
+  #facet_wrap(~`class/type`) +
+  scale_fill_brewer(palette = "Set1", direction = 1) +
+  labs(x = "Extensive Contact method availability", y = "log( total # of mentions)", 
+       subtitle = "Distribution of # of mentions (log scale)") +
+  theme_light() +
+  theme(strip.background =element_rect(fill="steelblue3"),
+        strip.text = element_text(colour = 'white'), 
+        panel.grid = element_blank()) + coord_flip()
+
+regdat %>% mutate(extensiveContact = if_else(extensiveContact == "None", extensiveContact, "Yes")) %>% 
+lm(log(totalMentions) ~ extensiveContact + toolAge, data = .) %>% broom::tidy() %>% 
+  mutate(across(.cols = where(is.numeric), .fns = ~round(.x, digits = 5))) %>% 
+  DT::datatable()
+```
+
+- Having Extensive contact method available is significant EVEN AFTER Ajdusting for Tool age.
+
+## (NEW) Additional Plot: Diversity of the type of tools
+```{r}
+regdat %>% select(toolName, toolType = `class/type`) %>% 
+  ggplot(aes(y = fct_infreq(toolType), fill = toolType)) +
+  geom_bar(width = .5, show.legend = FALSE) + 
+  labs(x = "Frequency", y = "Type of tool") +
+  scale_x_continuous(n.breaks = 7) + 
+  #scale_fill_brewer(palette = "Set3", direction = 1) +
+  theme_light() +
+  theme(panel.grid = element_blank() ) 
+```
+
+## (NEW) Overlap of tools between survey data and Tool Analysis
+
+```{r}
+tdat_edited %>% mutate(ToolAn_Data = toolName) %>% select(toolName, ToolAn_Data) %>% 
+  left_join(freq_tab_full_redefined %>% mutate(SImpact_Data = toolName), by = "toolName") %>% 
+  relocate(ToolAn_Data, SImpact_Data) %>% select(-toolName) %>% 
+  arrange(SImpact_Data) %>% 
+  filter(!is.na(SImpact_Data)) %>% 
+  DT::datatable(caption = "These tools had information in the Software Impact Analysis dataset")
+
+tdat_edited %>% mutate(ToolAn_Data = toolName) %>% select(toolName, ToolAn_Data) %>% 
+  left_join(freq_tab_full_redefined %>% mutate(SImpact_Data = toolName), by = "toolName") %>% 
+  relocate(ToolAn_Data, SImpact_Data) %>% select(-toolName) %>% 
+  arrange(SImpact_Data) %>% 
+  filter(is.na(SImpact_Data)) %>% 
+  mutate(ToolAn_Data = case_when(ToolAn_Data == "Gene" ~ "Gene Pattern Notebook",
+                                 TRUE ~ ToolAn_Data)) %>% 
+  DT::datatable(caption = "These tools had no information in the Software Impact Analysis dataset")
+```
+
+
+## Documentation Depth (manual data)
+
+- The information on all the tools regarding the extensiveness of the documentation was manually collected.
+
+```{r}
+#regdat %>% pull(toolName)
+
+regdat %<>% 
+  mutate(DocuDepth = case_when(
+    toolName == "Galaxy" ~ "Extensive",
+    toolName == "3D Slicer" ~ "Extensive",
+    toolName == "CRAVAT" ~ "Extensive",
+    toolName == "geWorkbench" ~ "Extensive",
+    toolName == "QIIME" ~ "Extensive",
+    toolName == "cBioPortal" ~ "Extensive",
+    toolName == "Xena" ~ "Webpage/PDF/ReadMe",
+    toolName == "DepMap" ~ "Extensive",
+    toolName == "TCPA" ~ "Extensive",
+    toolName == "OncoPPi" ~ "Webpage/PDF/ReadMe",
+    toolName == "JBrowse" ~ "Extensive",
+    toolName == "PhenStat" ~ "Extensive",
+    toolName == "Bioconductor" ~ "Extensive",
+    toolName == "ELMER" ~ "Extensive",
+    toolName == "DIGGIT" ~ "Webpage/PDF/ReadMe",
+    toolName == "MethylMix" ~ "Webpage/PDF/ReadMe",
+    toolName == "VIPER" ~ "Extensive",
+    toolName == "AMARETTO" ~ "Extensive",
+    toolName == "CORE" ~ "Extensive",
+    toolName == "InGRiD" ~ "Webpage/PDF/ReadMe",
+    toolName == "DANA" ~ "Webpage/PDF/ReadMe",
+    toolName == "AmpliconReconstructor" ~ "Webpage/PDF/ReadMe",
+    toolName == "AmpliconArchitect" ~ "Webpage/PDF/ReadMe",
+    toolName == "HistoQC" ~ "Webpage/PDF/ReadMe",
+    toolName == "GSEA" ~ "Extensive",
+    toolName == "Cytoscape" ~ "Extensive",
+    toolName == "Trinity" ~ "Webpage/PDF/ReadMe",
+    toolName == "TIES" ~ "Webpage/PDF/ReadMe", ## NONE
+    toolName == "OncoMX" ~ "Extensive",
+    toolName == "MSigDB" ~ "Webpage/PDF/ReadMe",
+    toolName == "Pathway Commons" ~ "Extensive",
+    toolName == "PDXFinder" ~ "Webpage/PDF/ReadMe", ## NONE
+    toolName == "rDriver" ~ "Webpage/PDF/ReadMe",
+    toolName == "dcmqi" ~ "Extensive",
+    toolName == "Lancet" ~ "Webpage/PDF/ReadMe",
+    toolName == "D2Refine" ~ "Webpage/PDF/ReadMe"),
+    DocuDepth = fct_relevel(DocuDepth, "Webpage/PDF/ReadMe"))
+```
+
+
+```{r}
+## Marginal dist
+p_doc1 <- regdat %>%  
+  ggplot(aes(x = DocuDepth, fill = fct_infreq(DocuDepth))) + 
+  geom_bar(position = "dodge", width = .5, show.legend = F) + 
+  geom_text(stat = 'count', 
+            aes(label = paste0(after_stat(round(100*count/sum(count),1)), "%")), 
+            position = position_dodge(width = .9), vjust = 2, col = "white") +
+  labs(x = "Documentation", y = "Frequency", subtitle = "Distribution of Presence of Documentation depth") +
+  scale_y_continuous(n.breaks = 7) + 
+  scale_fill_brewer(palette = "Set1", direction = -1) +
+  theme_light() 
+
+p_doc2 <- regdat %>%
+  ggplot(aes(x = DocuDepth, y = log(totalMentions), fill = DocuDepth)) +
+  geom_boxplot(width = 0.5, show.legend = T) +
+  scale_y_continuous(n.breaks = 6) + 
+  scale_fill_brewer(palette = "Set1", direction = 1) +
+  labs(x = "Documentation depth", y = "log( total # of mentions)", 
+       subtitle = "Distribution of # of mentions (log scale)") +
+  theme_light() 
+
+p_doc1 + p_doc2
+```
+
+```{r}
+lm(log(totalMentions) ~ DocuDepth, data = regdat) %>% broom::tidy() %>% 
+  mutate(across(.cols = where(is.numeric), .fns = ~round(.x, digits = 5))) %>% 
+  DT::datatable()
+
+regdat %>% mutate(extensiveContact = if_else(extensiveContact == "None", extensiveContact, "Yes")) %>% 
+lm(log(totalMentions) ~ extensiveContact + DocuDepth + toolAge, data = .) %>% broom::tidy() %>% 
+  mutate(across(.cols = where(is.numeric), .fns = ~round(.x, digits = 5))) %>% 
+  DT::datatable()
+
+lm(log(totalMentions) ~ DocuDepth + socialMedia + extensiveContact + toolAge, data = regdat) %>% broom::tidy() %>% 
+  mutate(across(.cols = where(is.numeric), .fns = ~round(.x, digits = 5))) %>% 
+  DT::datatable()
+
+#names(regdat)
+```
+
+```{r CarriePlots, fig.height=8, fig.width=8}
+# Social Media
+d1 <- regdat %>% 
+  ggplot(aes(x = releaseYear, y = log(Usage), col = socialMedia)) + 
+  geom_point(aes(shape = socialMedia)) + 
+  geom_smooth(method = "lm", se = T) +
+  labs(x = "Release Year", y = "log(total Usage)", subtitle = "Scatterplot of log-Usage vs Release Year") +
+  theme_light() 
+
+## DocuDepth
+d2 <- regdat %>%
+  ggplot(aes(x = releaseYear, y = log(Usage), col = DocuDepth)) + 
+  geom_point(aes(shape = DocuDepth)) + 
+  geom_smooth(method = "lm", se = T) +
+  labs(x = "Release Year", y = "log(total Usage)", subtitle = "Scatterplot of log-Usage vs Release Year") +
+  theme_light() 
+
+# extensiveContact
+d3 <- regdat %>% 
+  ggplot(aes(x = releaseYear, y = log(Usage), col = extensiveContact)) + 
+  geom_point(aes(shape = extensiveContact)) + 
+  geom_smooth(method = "lm", se = T) +
+  labs(x = "Release Year", y = "log(total Usage)", subtitle = "Scatterplot of log-Usage vs Release Year") +
+  theme_light() 
+
+d1 / d2 / d3
+```
+
+```{r CarriePlots2, fig.height=8, fig.width=8}
+# Social Media
+d11 <- regdat %>% 
+  ggplot(aes(x = releaseYear, y = log(totalMentions), col = socialMedia)) + 
+  geom_point(aes(shape = socialMedia)) + 
+  geom_smooth(method = "lm", se = T) +
+  labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
+  theme_light() 
+
+## DocuDepth
+d22 <- regdat %>%
+  ggplot(aes(x = releaseYear, y = log(totalMentions), col = DocuDepth)) + 
+  geom_point(aes(shape = DocuDepth)) + 
+  geom_smooth(method = "lm", se = T) +
+  labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
+  theme_light() 
+
+# extensiveContact
+d33 <- regdat %>% 
+  ggplot(aes(x = releaseYear, y = log(totalMentions), col = extensiveContact)) + 
+  geom_point(aes(shape = extensiveContact)) + 
+  geom_smooth(method = "lm", se = T) +
+  labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
+  theme_light() 
+
+d11 / d22 / d33
+```
+
+```{r}
+regdat %>% filter(toolAge < 12) %>% 
+  ggplot(aes(x = toolAge)) +
+  geom_histogram(aes(y = after_stat(density)), fill = "white", col = "darkgray", binwidth = 2) +
+  geom_density(col = "steelblue2") +
+  scale_x_continuous(breaks = seq(0, 22, by = 2)) +
+  labs(x = "Tool Age", y = "Density", subtitle = "Tool Age distribution") +
+  theme_light() + 
+  theme(
+    panel.grid = element_blank()
+  )
+```
+
+
+## Freq table for type of Social Media
+
+```{r}
+regdat %>% count(Twitter.bi, Youtube.bi, OtherMedia.bi)
+```
+
+
+
+
+
+

@@ -1,0 +1,444 @@
+---
+title: "Tool Analysis"
+subtitle: "Initial questions"
+author: "Awan"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: cosmo
+    highlight: pygments
+---
+
+<style type="text/css">
+body .main-container {
+  max-width: 1200px !important;
+  width: 1200px !important;
+}
+body {
+  max-width: 1200px !important;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,  fig.align='center')
+## Required packages
+library(tidyverse)
+library(magrittr)
+library(googlesheets4)
+library(DT)
+library(scales)
+# install.packages("devtools")
+library(patchwork) ## plot side by side
+```
+
+
+## Part I: Data loading and check
+
+```{r loadData, eval=FALSE, echo=TRUE}
+## Load data file and fix the Year column entries which appear as lists
+tdat <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1-GLClAEl0aydwQEX-EeHiVufIhZCvervXc35fBAQWIc/edit?usp=sharing") %>% 
+  mutate(`year of 1st release` = `year of 1st release` %>% as.character,
+         `year of the most recent version/update` = `year of the most recent version/update` %>% as.character)
+
+## For first time use, log in and give access to Tidyverse API Packages to [See, edit, create and delete all your Google Sheets spreadsheets]. 
+## When running after first authentication, run "1" to make the userID selection in the console
+write_csv(x = tdat, file = here::here("tdat.csv"))
+```
+
+### Loading data
+```{r}
+wdat <- read_csv(file = "tdat.csv") 
+```
+
+## Dichotomize the variables for analyses
+```{r}
+wdat %<>% 
+  #rename("ownDOI" = "Have a DOI for the software itself?") %>% 
+  mutate(ownDOI = if_else(!is.na(`Have a DOI for the software itself?`), true = "Yes", "No"),
+         ## Social Media
+         Twitter.bi = if_else(!is.na(`Twitter`), true = "Yes", "No"),
+         Youtube.bi = if_else(!is.na(`Youtube`), true = "Yes", "No"),
+         OtherMedia.bi = if_else(!is.na(`Other media`), true = "Yes", "No"),
+         ## Any social Media? 
+         socialMedia = if_else(Twitter.bi == "Yes" | Youtube.bi == "Yes" | OtherMedia.bi == "Yes", true = "Yes", "No"),
+         ## Instructions of How to Cite? 
+         citeHow = case_when(str_detect(`Instructions how to cite`, 'Yes') ~ "Yes",
+                             str_detect(`Instructions how to cite`, 'unclear') ~ "Unclear",
+                             TRUE ~ `Instructions how to cite`),
+         ###  Those without Yes/No/Unclear citation instructions to be included in "Yes"
+         citeHow = case_when(str_detect(citeHow, 'Yes|No|Unclear') ~ citeHow,
+                             TRUE ~ "Yes"))
+```
+
+
+### Fixing Release and Update date entries + Calculate ToolAge, Elapsed time since last update
+```{r}
+## Release Issue 1: Gene Pattern Notebook - Which one to consider as start/release year. 
+## Gene Pattern release 2006, but Notebook release 2017
+## I used 2006 as suggested. 
+
+## Update issue 1: geWorkbench - most recent version 2016 (web page updated in 2022). Which one to consider? 
+##  I used 2022. (as suggested by Carrie: "I think update is the wrong word here - maybe maintenance date (I know that is what Andrey put, but update kinda implies software update) - but yes, 2022 seems reasonable - I think they are keeping up with maintaining it")
+
+## Update issue 2:  Text Information Extraction System (TIES) - this software and forum are no longer maintained, as of 8/15/2019. 
+## I used 2019 (Carrie:  would say 2019 is the most recent date)
+
+wdat %<>% 
+  #select(`tool name`, `year of 1st release`, `year of the most recent version/update`) %>% 
+  mutate(## Release Year 
+         releaseYear = if_else(`tool name` == "Gene Pattern Notebook", true = "2006", `year of 1st release`),
+         releaseYear = if_else(str_detect(releaseYear, pattern = "2"), as.numeric(releaseYear), NA_real_),
+         ## I found out the release years for the tools: Cytoscape (2002), RDriver (2017)
+         releaseYear = case_when(`tool name` == "rDriver" ~ 2017, 
+                                 `tool name` == "Cytoscape" ~ 2002, 
+                                 TRUE ~ releaseYear),
+         ## Latest Update Year
+         updateYear = case_when(`tool name` == "geWorkbench" ~ 2022,
+                                `tool name` == "Text Information Extraction System (TIES)" ~ 2019,
+                                `year of the most recent version/update` == "unknown" ~ NA_real_,
+                                TRUE ~ as.numeric(`year of the most recent version/update`)),
+         ## Year 2022 is completed, hence those created in 2022 could be considered as Year 1 age
+         toolAge = 2023 - releaseYear,
+         ## Since this is only the beginning of 2023, we count up to the year 2022
+         TimeSinceLastUpdate = 2022 - updateYear)
+```
+
+
+## Recoding other interesting variables
+1. extensive contact/feedback 
+2. software health metrics (unit testing, automation, code coverage stats)
+
+```{r}
+wdat %<>% 
+  #select(`tool name`, `extensive contact/feedback`, `software health metrics (unit testing, automation, code coverage stats)`) %>% 
+  mutate(## extensive contact/feedback 
+         extensiveContact = case_when(str_detect(`extensive contact/feedback`, "not working|no posts") ~ "NotWorking",
+                                      `extensive contact/feedback` == "No" ~ "None", 
+                                      TRUE ~ "Yes"),
+         ## software health metrics
+         softHealthMetrics = str_sub(`software health metrics (unit testing, automation, code coverage stats)`, 1, 14), ## keep first 14 chars
+         softHealthMetrics = str_replace(`softHealthMetrics`, "statistic|stati|st", "stats"),  ##replace with meaninful string "stats"
+         softHealthMetrics = if_else(softHealthMetrics == "Limited by num", "Installation count", softHealthMetrics), ## Better recode
+         softHealthMetrics = if_else(str_detect(softHealthMetrics, "Download"), "Download stats", softHealthMetrics), ## Better recode
+         softHealthMetrics = str_trim(softHealthMetrics, "both") ## Remove white space that may exist
+         ) 
+
+# Saving edited dataset
+write_csv(x = wdat, file = here::here("tdat_edited.csv"))
+```
+
+# Graphical Analyses
+
+## 1. Proportion of softwares with DOI
+```{r, fig.align='center'}
+wdat %>% 
+  ggplot(aes(x = ownDOI, fill = ownDOI)) +
+  geom_bar( width = 0.5) + 
+  geom_text(stat = 'count', aes(label = paste0(after_stat(round(100*count/sum(count),1)), "%")), vjust = 1.5) +
+  labs(x = "softwares with DOI", y = "Frequency", caption = "Distribution of softwares with own DOI") +
+  scale_y_continuous(n.breaks = 10) + 
+  scale_fill_brewer(palette = "Set2", direction = -1) +
+  theme_light() 
+
+wdat %>% 
+  ggplot(aes(x = ownDOI, fill = ownDOI)) +
+  geom_bar( width = 0.5) + 
+  geom_text(stat = 'count', aes(label = after_stat(count), vjust = 1.5)) +
+  facet_wrap(~`class/type`) +
+  labs(x = "softwares with DOI", y = "Frequency", caption = "Distribution of softwares with own DOI") +
+  scale_y_continuous(n.breaks = 10) + 
+  scale_fill_brewer(palette = "Set2", direction = -1) +
+  theme_light() +
+  theme(strip.background =element_rect(fill="steelblue3"),
+        strip.text = element_text(colour = 'white'), 
+        panel.grid = element_blank())
+```
+
+
+## 2. Any kind of social media presence
+```{r, fig.align='center'}
+## Marginal dist
+wdat %>% 
+  ggplot(aes(x = socialMedia, fill = fct_infreq(socialMedia))) + 
+  geom_bar(position = "dodge", width = .6, show.legend = F) + 
+  geom_text(stat = 'count', 
+            aes(label = paste0(after_stat(round(100*count/sum(count),1)), "%")), position = position_dodge(width = .9), vjust = 1.5) +
+  labs(x = "Social Media Presence", y = "Frequency", fill = "Social Media Presence", caption = "Distribution of Social Media Presence") +
+  scale_y_continuous(n.breaks = 7) + 
+  scale_fill_brewer(palette = "Set2", direction = -1) +
+  theme_light() 
+
+## Stratified by
+wdat %>% 
+  ggplot(aes(x = socialMedia, fill = fct_infreq(socialMedia))) + 
+  geom_bar(position = "dodge", width = .6, show.legend = F) + 
+  geom_text(stat = 'count', 
+            aes(label = paste0(after_stat(count))), position = position_dodge(width = .9), vjust = 1.5) +
+  facet_wrap(~`class/type`) +
+  labs(x = "Social Media Presence", y = "Frequency", fill = "Social Media Presence", caption = "Distribution of Social Media Presence") +
+  scale_y_continuous(n.breaks = 7) + 
+  scale_fill_brewer(palette = "Set2", direction = -1) +
+  theme_light() + 
+  theme(strip.background =element_rect(fill="steelblue3"),
+        strip.text = element_text(colour = 'white'), 
+        panel.grid = element_blank())
+
+
+## Distribution of type of social media
+wdat %>% 
+  select(socialMedia, Twitter.bi, Youtube.bi, OtherMedia.bi, `class/type`) %>% 
+  pivot_longer(cols = -c(socialMedia, `class/type`), names_to = "socMed", values_to = "vals") %>% 
+  filter(vals == "Yes") %>% 
+  ggplot(aes(x = fct_infreq(socMed), fill = fct_infreq(socMed))) + 
+  geom_bar(position = "dodge", width = .6, show.legend = F) + 
+  #geom_text(stat = 'count', aes(label = paste0(after_stat(round(100*count/sum(count),2)), "%")), position = position_dodge(width = .9), vjust = 1.5) +
+  facet_wrap(~`class/type`) +
+  labs(x = "Social Media Outlets", y = "Frequency", fill = "Media Outlets", caption = "Distribution of Social Media Outlets (bi = Binary)") +
+  scale_y_continuous(n.breaks = 7) + 
+  scale_fill_brewer(palette = "Set2", direction = 1) +
+  theme_light() +
+  theme(strip.background =element_rect(fill="steelblue3"),
+        strip.text = element_text(colour = 'white'),
+        panel.grid = element_blank())
+```
+
+
+## 3. Proportion of How to cite 
+```{r, fig.align='center'}
+wdat %>% 
+  ggplot(aes(x = fct_infreq(citeHow), fill = citeHow)) +
+  geom_bar(position = "dodge", width = .5, show.legend = F) + 
+  geom_text(stat = 'count', 
+            aes(label = paste0(after_stat(round(100*count/sum(count),1)), "%")), position = position_dodge(width = .9), vjust = 1.5) +
+  labs(x = "Instruction availability on How to Cite", y = "Frequency", caption = "Distribution of Citation Instructions") +
+  scale_y_continuous(n.breaks = 12) + 
+  scale_fill_brewer(palette = "Set2", direction = -1) +
+  theme_light() 
+
+## Stratified 
+wdat %>% 
+  ggplot(aes(x = fct_infreq(citeHow), fill = citeHow)) +
+  geom_bar(position = "dodge", width = .5, show.legend = F) + 
+  geom_text(stat = 'count', 
+            aes(label = paste0(after_stat(count))), position = position_dodge(width = .9), vjust = 1.2) +
+  facet_wrap(~`class/type`) +
+  labs(x = "Instruction availability on How to Cite", y = "Frequency", caption = "Distribution of Citation Instructions") +
+  #scale_y_continuous(n.breaks = 12) + 
+  scale_fill_brewer(palette = "Set2", direction = -1) +
+  theme_light() +
+  theme(strip.background =element_rect(fill="steelblue3"),
+        strip.text = element_text(colour = 'white'), 
+        panel.grid = element_blank())
+```
+
+
+## 4. Age of the tool
+```{r, fig.align='center'}
+## Tool Age distribution
+wdat %>% select(releaseYear) %>% mutate(releaseYear = as.factor(releaseYear)) %>% 
+  ggplot(aes(x = releaseYear, fill = releaseYear)) +
+  geom_bar(position = "dodge", width = .5, show.legend = F) + 
+  labs(x = "Release Year", y = "Frequency", caption = "Distribution of Tool releases across the years") +
+  scale_y_continuous(n.breaks = 7) + 
+  #scale_fill_brewer(palette = "Set3", direction = 1) +
+  theme_light() 
+
+wdat %>%
+  ggplot(aes(x = toolAge)) +
+  geom_histogram(aes(y = after_stat(density)), fill = "white", col = "darkgray", binwidth = 2) +
+  geom_density(col = "steelblue2") +
+  scale_x_continuous(breaks = seq(0, 22, by = 2)) +
+  labs(x = "Tool Age", y = "Density", subtitle = "Tool Age distribution") +
+  theme_light() + 
+  theme(
+    panel.grid = element_blank()
+  )
+```
+## Time elapsed since last update
+```{r, fig.align='center'}
+p1 <- wdat %>%
+  ggplot(aes(x = TimeSinceLastUpdate)) +
+  geom_histogram(aes(y = after_stat(density)), fill = "white", col = "darkgray", binwidth = 1) +
+  geom_density(col = "steelblue2") +
+  scale_x_continuous(breaks = seq(0, 6, by = 1)) +
+  labs(x = "Elapsed time (years)", y = "Density", subtitle = "Time elaspsed since last update (those updated in 2022 is considered 0 time elapsed)") +
+  theme_light() + 
+  theme(panel.grid = element_blank() )
+
+ ## Pattern in update tendencies
+p2 <- wdat %>%
+  ggplot(aes(x = toolAge, y = TimeSinceLastUpdate)) +
+  geom_point(col = "navyblue", shape = 2) + 
+  geom_smooth(se = F, col = "steelblue2") + 
+  labs(y = "Elapsed time since last update (years)", x = "Tool Age (years)", caption = "No apparent pattern presents itself here") +
+  scale_x_continuous(n.breaks = 12) +
+  theme_light() + 
+  theme(panel.grid = element_blank() )
+
+p1 / p2
+
+## Time elapsed since last update - One year vs more
+wdat %>% 
+  mutate(TimeSinceLastUpdate_bin = if_else(TimeSinceLastUpdate < 2, "<= 1 year", "2+ years")) %>% 
+  ggplot(aes(x = TimeSinceLastUpdate_bin, fill = TimeSinceLastUpdate_bin)) +
+  geom_bar(position = "dodge", width = .5, show.legend = F) + 
+  labs(x = "Elapsed time category", y = "Frequency", caption = "Time elaspsed since last update (those updated in 2022 is considered 0 time elapsed)") +
+  scale_y_continuous(n.breaks = 7) + 
+  #scale_fill_brewer(palette = "Set1", direction = 1) +
+  theme_light() 
+
+## Time elapsed since last update - One year vs more || Stratified
+wdat %>% 
+  mutate(TimeSinceLastUpdate_bin = if_else(TimeSinceLastUpdate < 2, "<= 1 year", "2+ years")) %>% 
+  #filter(!is.na(TimeSinceLastUpdate_bin) ) +
+  ggplot(aes(x = TimeSinceLastUpdate_bin, fill = TimeSinceLastUpdate_bin)) +
+  geom_bar(position = "dodge", width = .5, show.legend = F) + 
+  labs(x = "Elapsed time category", y = "Frequency", caption = "Time elaspsed since last update (those updated in 2022 is considered 0 time elapsed)") +
+  facet_wrap(~`class/type`) +
+  scale_y_continuous(n.breaks = 7) + 
+  #scale_fill_brewer(palette = "Set1", direction = 1) +
+  theme_light() +
+  theme(strip.background =element_rect(fill="steelblue3"),
+        strip.text = element_text(colour = 'white'), 
+        panel.grid = element_blank())
+```
+
+## 5. Software Health metrics
+
+```{r, fig.align='center'}
+wdat %>% select(`tool name`, softHealthMetrics, `class/type`) %>% 
+  ggplot(aes(y = fct_infreq(softHealthMetrics), fill = softHealthMetrics)) +
+  geom_bar(position = "dodge", width = .5, show.legend = F) + 
+  geom_text(stat = 'count', 
+            aes(label = paste0(after_stat(count))), position = position_dodge(width = .9), hjust = 1.5) +
+  labs(x = "Software Health metrics", y = "Frequency", caption = "Distribution of Software Health metrics") +
+  scale_x_continuous(n.breaks = 12) + 
+  scale_fill_brewer(palette = "Set2", direction = -1) +
+  theme_light()
+
+wdat %>% select(`tool name`, softHealthMetrics, `class/type`) %>% 
+  ggplot(aes(y = fct_infreq(softHealthMetrics), fill = softHealthMetrics)) +
+  geom_bar(position = "dodge", width = .5, show.legend = F) + 
+  geom_text(stat = 'count', 
+            aes(label = paste0(after_stat(count))), position = position_dodge(width = .9), hjust = 1.5) +
+  facet_wrap(~`class/type`) +
+  labs(x = "Software Health metrics", y = "Frequency", caption = "Distribution of Software Health metrics") +
+  #scale_x_continuous(n.breaks = 12) + 
+  scale_fill_brewer(palette = "Set2", direction = -1) +
+  theme_light() + 
+  theme(strip.background =element_rect(fill="steelblue3"),
+        strip.text = element_text(colour = 'white'))
+```
+
+## 6. Extensive contact/feedback
+```{r}
+wdat %>%
+  ggplot(aes(y = fct_infreq(extensiveContact), fill = extensiveContact)) +
+  geom_bar(position = "dodge", width = .5, show.legend = F) + 
+  geom_text(stat = 'count', 
+            aes(label = paste0(after_stat(round(100*count/sum(count),1)), "%")), position = position_dodge(width = .9), hjust = 1.2) +
+  labs(x = "Extensive contact/feedback", y = "Frequency", caption = "Distribution of Extensive contact/feedback") +
+  scale_x_continuous(n.breaks = 13) + 
+  scale_fill_brewer(palette = "Set1", direction = 1) +
+  theme_light() 
+
+## stratified by tool type
+wdat %>%
+  ggplot(aes(y = fct_infreq(extensiveContact), fill = extensiveContact)) +
+  geom_bar(position = "dodge", width = .5, show.legend = F) + 
+  geom_text(stat = 'count', 
+            aes(label = paste0(after_stat(count))), position = position_dodge(width = .9), hjust = 1.5) +
+  facet_wrap(~`class/type`) + 
+  labs(x = "Extensive contact/feedback", y = "Frequency", caption = "Distribution of Extensive contact/feedback") +
+  #scale_x_continuous(n.breaks = 13) + 
+  scale_fill_brewer(palette = "Set1", direction = 1) +
+  theme_light() +
+  theme(strip.background =element_rect(fill="steelblue3"),
+        strip.text = element_text(colour = 'white'))
+```
+
+## 7. Check if distributions differ across different time categories
+
+```{r}
+wdat %>% filter(!is.na(releaseYear)) %>% 
+  mutate(relYear.cut = cut_interval(releaseYear, 4)) %>% 
+  ggplot(aes(fill = fct_infreq(extensiveContact), x = relYear.cut)) +
+  geom_bar(position = "dodge", width = .5) + 
+  # geom_text(stat = 'count', 
+  #           aes(label = paste0(after_stat(round(100*count/sum(count),1)), "%")), position = position_dodge(width = .9), hjust = -0.2) +
+  labs(x = "Release Year", y = "Frequency", fill = "Extensive contact/feedback") +
+  scale_y_continuous(n.breaks = 13) + 
+  scale_fill_brewer(palette = "Set2", direction = 1) +
+  theme_light() 
+
+# Stratified
+wdat %>% filter(!is.na(releaseYear)) %>% 
+  mutate(relYear.cut = cut_interval(releaseYear, 4)) %>% 
+  ggplot(aes(fill = fct_infreq(extensiveContact), x = relYear.cut)) +
+  geom_bar(position = "dodge", width = .5) + 
+  facet_wrap(~`class/type`) +
+  # geom_text(stat = 'count', 
+  #           aes(label = paste0(after_stat(round(100*count/sum(count),1)), "%")), position = position_dodge(width = .9), hjust = -0.2) +
+  labs(x = "Release Year", y = "Frequency", fill = "Extensive contact/feedback") +
+  #scale_y_continuous(n.breaks = 13) + 
+  scale_fill_brewer(palette = "Set1", direction = -1) +
+  theme_light() +
+  theme(strip.background =element_rect(fill="steelblue3"),
+        strip.text = element_text(colour = 'white'),
+        legend.position = "top") + 
+  coord_flip()
+```
+
+```{r}
+wdat %>% 
+  mutate(softHealthMetrics.bi = if_else(softHealthMetrics == "No", true = "softHealthMetrics - No", false = "softHealthMetrics - Yes")) %>% 
+  filter(!is.na(releaseYear)) %>% 
+  mutate(relYear.cut = cut_interval(releaseYear, 4)) %>% 
+  ggplot(aes(fill = fct_infreq(extensiveContact), x = relYear.cut)) +
+  geom_bar(position = "dodge", width = .5) + 
+  facet_wrap(~softHealthMetrics.bi, nrow = 2) +
+  labs(x = "Release Year", y = "Frequency", fill = "Extensive contact/feedback") +
+  # scale_y_continuous(n.breaks = 13) + 
+  scale_fill_brewer(palette = "Set1", direction = 1) +
+  theme_light() +
+  theme(strip.background =element_rect(fill="steelblue3"),
+        strip.text = element_text(colour = 'white'),
+        legend.position = "top", panel.grid = element_blank() ) 
+```
+
+## Additional Plot: Diversity of the type of tools
+```{r}
+wdat %>% select(toolName = `tool name`, toolType = `class/type`) %>% 
+  ggplot(aes(y = fct_infreq(toolType), fill = toolType)) +
+  geom_bar(width = .5, show.legend = FALSE) + 
+  labs(x = "Frequency", y = "Type of tool") +
+  scale_x_continuous(n.breaks = 7) + 
+  #scale_fill_brewer(palette = "Set3", direction = 1) +
+  theme_light() +
+  theme(panel.grid = element_blank() ) 
+```
+
+
+
+## Full dataset view 
+
+```{r}
+wdat %>% select(-`Instructions how to cite`, -`...11`) %>%  ## deleting these two columns to make the table more readable
+  datatable(options = list(scrollX = TRUE))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
