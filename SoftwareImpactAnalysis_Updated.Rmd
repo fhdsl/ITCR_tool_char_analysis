@@ -35,6 +35,20 @@ tdat <- read_csv(file = "tdat_edited.csv", show_col_types = FALSE)  %>%
   mutate(toolName = str_trim(toolName))
 ```
 
+```{r}
+health <- read_csv(here::here("Tool_data_health_metrics.csv"))
+count(health, health_metrics)
+health %<>% mutate(simple_health_metrics = case_when(
+  str_detect(health_metrics, "no|No|unknown status|no badge|Not for core software|CI but not badge|\\?") ~ "No",
+ str_detect(health_metrics, "Yes|yes|Test badges|CI and coverage badges|bioconductor only| with badge")~ "Yes",
+  TRUE ~ health_metrics
+))
+identical(tdat$toolName, health$`tool name`)
+tdat$simple_health_metrics <- health$simple_health_metrics
+
+ggpl
+```
+
 ## Caveats with the data set
 
 - The definitions of each column type are as follows:
@@ -505,6 +519,11 @@ lm(log(totalMentions) ~ DocuDepth + socialMedia + extensiveContact + toolAge, da
 #names(regdat)
 ```
 
+
+### Health Metrics
+
+
+
 ```{r CarriePlots, fig.height=8, fig.width=8}
 # Social Media
 d1 <- regdat %>% 
@@ -512,7 +531,7 @@ d1 <- regdat %>%
   geom_point(aes(shape = socialMedia)) + 
   geom_smooth(method = "lm", se = T) +
   labs(x = "Release Year", y = "log(total Usage)", subtitle = "Scatterplot of log-Usage vs Release Year") +
-  theme_light() 
+  theme_light() +coord_equal()
 
 ## DocuDepth
 d2 <- regdat %>%
@@ -520,7 +539,7 @@ d2 <- regdat %>%
   geom_point(aes(shape = DocuDepth)) + 
   geom_smooth(method = "lm", se = T) +
   labs(x = "Release Year", y = "log(total Usage)", subtitle = "Scatterplot of log-Usage vs Release Year") +
-  theme_light() 
+  theme_light() +coord_equal()
 
 # extensiveContact
 d3 <- regdat %>% 
@@ -528,7 +547,7 @@ d3 <- regdat %>%
   geom_point(aes(shape = extensiveContact)) + 
   geom_smooth(method = "lm", se = T) +
   labs(x = "Release Year", y = "log(total Usage)", subtitle = "Scatterplot of log-Usage vs Release Year") +
-  theme_light() 
+  theme_light() +coord_equal()
 
 d1 / d2 / d3
 ```
@@ -540,7 +559,7 @@ d11 <- regdat %>%
   geom_point(aes(shape = socialMedia)) + 
   geom_smooth(method = "lm", se = T) +
   labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
-  theme_light() 
+  theme_light() +coord_equal()
 
 ## DocuDepth
 d22 <- regdat %>%
@@ -548,7 +567,7 @@ d22 <- regdat %>%
   geom_point(aes(shape = DocuDepth)) + 
   geom_smooth(method = "lm", se = T) +
   labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
-  theme_light() 
+  theme_light() +coord_equal()
 
 # extensiveContact
 d33 <- regdat %>% 
@@ -556,7 +575,15 @@ d33 <- regdat %>%
   geom_point(aes(shape = extensiveContact)) + 
   geom_smooth(method = "lm", se = T) +
   labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
-  theme_light() 
+  theme_light() +coord_equal()
+
+# healthmetrics
+d34 <- regdat %>% 
+  ggplot(aes(x = releaseYear, y = log(totalMentions), col = ownDOI)) + 
+  geom_point(aes(shape = ownDOI)) + 
+  geom_smooth(method = "lm", se = T) +
+  labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
+  theme_light() +coord_equal()
 
 d11 / d22 / d33
 ```
