@@ -377,7 +377,7 @@ lm(log(totalMentions) ~ socialMedia + citeHow + socialMedia:citeHow, data = regd
 
 - Note: It seems that Tool age is a very strong predictor of the log(mentions), and makes the other variables insignificant.
 
-## (NEW) Stratification by: How to cite instruction (WITHOUT BioConductor and other-R packages)
+## (coming) Stratification by: How to cite instruction (WITHOUT BioConductor and other-R packages)
 
 ```{r Howtocite_WITHOUT}
 ## Marginal dist
@@ -455,7 +455,7 @@ regdat %>% select(toolName, toolType = `class/type`) %>%
   theme(panel.grid = element_blank() ) 
 ```
 
-## (NEW) Overlap of tools between survey data and Tool Analysis
+## (coming) Overlap of tools between survey data and Tool Analysis
 
 ```{r}
 tdat_edited %>% mutate(ToolAn_Data = toolName) %>% select(toolName, ToolAn_Data) %>% 
@@ -565,15 +565,24 @@ lm(log(totalMentions) ~ DocuDepth + socialMedia + extensiveContact + toolAge, da
   DT::datatable()
 
 #names(regdat)
+lm(log(Usage) ~ toolAge +simple_health_metrics*socialMedia, data = filter(regdat, toolAge >=3) ) %>% broom::tidy() %>% 
+  mutate(across(.cols = where(is.numeric), .fns = ~round(.x, digits = 5))) %>% 
+  DT::datatable()
+
 ```
 
 ```{r CarriePlots, fig.height=8, fig.width=8}
 # Social Media
+
+regdat %<>% mutate(
+  socialMedia = factor(socialMedia, levels = c("Yes", "No")),
+  
+)
 d1 <- regdat %>% 
   ggplot(aes(x = releaseYear, y = log(Usage), col = socialMedia)) + 
   geom_point(aes(shape = socialMedia)) + 
   geom_smooth(method = "lm", se = T, alpha = 0.2) +
-  labs(x = "Release Year", y = "log(total Usage)", subtitle = "Scatterplot of log-Usage vs Release Year") +
+  labs(x = "Release Year", y = "log(total Usage)", title = "Social Media Presence") +
   theme_light() +coord_equal() + theme(legend.position = "bottom")
 
 ## DocuDepth
@@ -581,7 +590,7 @@ d2 <- regdat %>%
   ggplot(aes(x = releaseYear, y = log(Usage), col = DocuDepth)) + 
   geom_point(aes(shape = DocuDepth)) + 
   geom_smooth(method = "lm", se = T, alpha = 0.2) +
-  labs(x = "Release Year", y = "log(total Usage)", subtitle = "Scatterplot of log-Usage vs Release Year") +
+  labs(x = "Release Year", y = "log(total Usage)", title = "Documentation Depth") +
   theme_light() +coord_equal() + theme(legend.position = "bottom")
 
 # extensiveContact
@@ -589,7 +598,7 @@ d3 <- regdat %>%
   ggplot(aes(x = releaseYear, y = log(Usage), col = extensiveContact)) + 
   geom_point(aes(shape = extensiveContact)) + 
   geom_smooth(method = "lm", se = T, alpha = 0.2) +
-  labs(x = "Release Year", y = "log(total Usage)", subtitle = "Scatterplot of log-Usage vs Release Year") +
+  labs(x = "Release Year", y = "log(total Usage)", title = "Contact Depth") +
   theme_light() +coord_equal() + theme(legend.position = "bottom")
 
 # CiteHow
@@ -597,7 +606,7 @@ d4 <- regdat %>%
   ggplot(aes(x = releaseYear, y = log(Usage), col = citeHow)) + 
   geom_point(aes(shape = citeHow)) + 
   geom_smooth(method = "lm", se = T, alpha = 0.2) +
-  labs(x = "Release Year", y = "log(total Usage)", subtitle = "Scatterplot of log-Usage vs Release Year") +
+  labs(x = "Release Year", y = "log(total Usage)", subtitle = "Information for citing") +
   theme_light() +coord_equal() + theme(legend.position = "bottom")
 
 # health metrics
@@ -605,7 +614,7 @@ d5 <- regdat %>% drop_na(simple_health_metrics) %>%
   ggplot(aes(x = releaseYear, y = log(Usage), col = simple_health_metrics)) + 
   geom_point(aes(shape = simple_health_metrics)) + 
   geom_smooth(method = "lm", se = T, alpha = 0.2) +
-  labs(x = "Release Year", y = "log(total Usage)", subtitle = "Scatterplot of log-Usage vs Release Year") +
+  labs(x = "Release Year", y = "log(total Usage)", title = "Presence of Software Health Metrics", subtitle = ("test coverage and build status badges")) +
   theme_light() +coord_equal() + theme(legend.position = "bottom")
 
 (d1 + d2) / (d3 + d5)
@@ -617,7 +626,7 @@ d11 <- regdat %>%
   ggplot(aes(x = releaseYear, y = log(totalMentions), col = socialMedia)) + 
   geom_point(aes(shape = socialMedia)) + 
   geom_smooth(method = "lm", se = T, alpha = 0.2) +
-  labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
+  labs(x = "Release Year", y = "log(Ttotal Mentions)", title = "Social Media Presence") +
   theme_light() +coord_equal() + theme(legend.position = "bottom")
 
 ## DocuDepth
@@ -625,7 +634,7 @@ d22 <- regdat %>%
   ggplot(aes(x = releaseYear, y = log(totalMentions), col = DocuDepth)) + 
   geom_point(aes(shape = DocuDepth)) + 
   geom_smooth(method = "lm", se = T, alpha = 0.2) +
-  labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
+  labs(x = "Release Year", y = "log(Total Mentions)", title = "Documentation Depth") +
   theme_light() +coord_equal() + theme(legend.position = "bottom")
 
 # extensiveContact
@@ -633,7 +642,7 @@ d33 <- regdat %>%
   ggplot(aes(x = releaseYear, y = log(totalMentions), col = extensiveContact)) + 
   geom_point(aes(shape = extensiveContact)) + 
   geom_smooth(method = "lm", se = T, alpha = 0.2) +
-  labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
+  labs(x = "Release Year", y = "log(Total Mentions)", title =  "Contact Depth") +
   theme_light() +coord_equal() + theme(legend.position = "bottom")
 
 # CiteHow
@@ -641,21 +650,21 @@ d44 <- regdat %>%
   ggplot(aes(x = releaseYear, y = log(totalMentions), col = citeHow)) + 
   geom_point(aes(shape = citeHow)) + 
   geom_smooth(method = "lm", se = T, alpha = 0.2) +
-  labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
+  labs(x = "Release Year", y = "log(Total Mentions)", subtitle = "Information on how to cite") +
   theme_light() +coord_equal() + theme(legend.position = "bottom")
 
 d55<- regdat %>% drop_na(simple_health_metrics) %>%
   ggplot(aes(x = releaseYear, y = log(totalMentions), col = simple_health_metrics)) + 
   geom_point(aes(shape = simple_health_metrics)) + 
   geom_smooth(method = "lm", se = T, alpha = 0.2) +
-  labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
+  labs(x = "Release Year", y = "log(Total Mentions)", title = "Presence of Software Health Metrics", subtitle = ("test coverage and build status badges")) +
   theme_light() +coord_equal() + theme(legend.position = "bottom")
 
 (d11 + d22) / (d33 + d55)
 ```
 
 ```{r}
-regdat %>% filter(toolAge < 12) %>% 
+regdat  %>% 
   ggplot(aes(x = toolAge)) +
   geom_histogram(aes(y = after_stat(density)), fill = "white", col = "darkgray", binwidth = 2) +
   geom_density(col = "steelblue2") +
