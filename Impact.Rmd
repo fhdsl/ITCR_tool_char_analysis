@@ -5,6 +5,8 @@ author: "Awan"
 date: "`r Sys.Date()`"
 output: 
   html_document:
+    toc: true
+    toc_float: true
     theme: cosmo
     highlight: pygments
 ---
@@ -18,6 +20,7 @@ library(magrittr)
 library(DT)
 library(scales)
 library(patchwork) ## plot side by side
+library(here)
 ```
 
 
@@ -35,19 +38,64 @@ tdat <- read_csv(file = "tdat_edited.csv", show_col_types = FALSE)  %>%
   mutate(toolName = str_trim(toolName))
 ```
 
+
 ```{r}
+ 
 health <- read_csv(here::here("Tool_data_health_metrics.csv"))
+
 count(health, health_metrics)
 health %<>% mutate(simple_health_metrics = case_when(
-  str_detect(health_metrics, "no|No|unknown status|no badge|Not for core software|CI but not badge|\\?") ~ "No",
- str_detect(health_metrics, "Yes|yes|Test badges|CI and coverage badges|bioconductor only| with badge")~ "Yes",
+  str_detect(health_metrics, 
+"no|No|unknown status|no badge|Not for core software|CI but not badge|\\?") ~ "No",
+ str_detect(health_metrics, 
+"Yes|yes|Test badges|CI and coverage badges|bioconductor only| with badge")~ "Yes",
   TRUE ~ health_metrics
 ))
+ 
 identical(tdat$toolName, health$`tool name`)
-tdat$simple_health_metrics <- health$simple_health_metrics
-
-ggpl
+ 
+tdat$simple_health_metrics <- health$simple_health_metrics 
 ```
+
+## 1. Proportion of softwares with health metrics shown
+```{r, fig.align='center'}
+tdat %>% 
+    mutate(simple_health_metrics = case_when(is.na(simple_health_metrics)~ "NA", TRUE ~simple_health_metrics))%>%
+  ggplot(aes(x = simple_health_metrics, fill = simple_health_metrics)) +
+  geom_bar( width = 0.5) + 
+  geom_text(stat = 'count', aes(label = paste0(after_stat(round(100*count/sum(count),1)), "%")), vjust = 1.5) +
+  labs(x = "softwares with DOI", y = "Frequency", caption = "Distribution of softwares with health metrics") +
+  scale_y_continuous(n.breaks = 10) + 
+  scale_fill_brewer(palette = "Set2", direction = -1) +
+  theme_light() 
+
+tdat %>% 
+    drop_na(simple_health_metrics) %>%
+  ggplot(aes(x = simple_health_metrics, fill = simple_health_metrics)) +
+  geom_bar( width = 0.5) + 
+  geom_text(stat = 'count', aes(label = paste0(after_stat(round(100*count/sum(count),1)), "%")), vjust = 1.5) +
+  labs(x = "softwares with DOI", y = "Frequency", caption = "Distribution of softwares with health metrics") +
+  scale_y_continuous(n.breaks = 10) + 
+  scale_fill_brewer(palette = "Set2", direction = -1) +
+  theme_light() 
+
+tdat %>%
+  mutate(simple_health_metrics = case_when(is.na(simple_health_metrics)~ "NA", TRUE ~simple_health_metrics))%>%
+  ggplot(aes(x = simple_health_metrics, fill = simple_health_metrics)) +
+  geom_bar( width = 0.5) + 
+  geom_text(stat = 'count', aes(label = after_stat(count), vjust = 1.5)) +
+  facet_wrap(~`class/type`) +
+  labs(x = "softwares with health metrics shown", y = "Frequency", caption = "Distribution of softwares with health metrics shown") +
+  scale_y_continuous(n.breaks = 10) + 
+  scale_fill_brewer(palette = "Set2", direction = -1) +
+  theme_light() +
+  theme(strip.background =element_rect(fill="steelblue3"),
+        strip.text = element_text(colour = 'white'), 
+        panel.grid = element_blank())
+```
+
+
+
 
 ## Caveats with the data set
 
@@ -123,7 +171,7 @@ freq_tab_full <- wdat %>%
                 options = list(columnDefs = list(list(className = 'dt-center', targets = "_all"))))
 ```
 
-## REDEFINE total mentions using only (Allusion+Deposition+Usage)
+## REDEFINE total metntions using only (Allusion+Deposition+Usage)
 ```{r}
 freq_tab_full_redefined <- wdat %>% 
   ## We filter out the Creations 
@@ -329,7 +377,7 @@ lm(log(totalMentions) ~ socialMedia + citeHow + socialMedia:citeHow, data = regd
 
 - Note: It seems that Tool age is a very strong predictor of the log(mentions), and makes the other variables insignificant.
 
-## (NEW) Stratification by: How to cite instruction (WITHOUT BioConductor and other-R packages)
+## (coming) Stratification by: How to cite instruction (WITHOUT BioConductor and other-R packages)
 
 ```{r Howtocite_WITHOUT}
 ## Marginal dist
@@ -407,7 +455,7 @@ regdat %>% select(toolName, toolType = `class/type`) %>%
   theme(panel.grid = element_blank() ) 
 ```
 
-## (NEW) Overlap of tools between survey data and Tool Analysis
+## (coming) Overlap of tools between survey data and Tool Analysis
 
 ```{r}
 tdat_edited %>% mutate(ToolAn_Data = toolName) %>% select(toolName, ToolAn_Data) %>% 
@@ -517,39 +565,59 @@ lm(log(totalMentions) ~ DocuDepth + socialMedia + extensiveContact + toolAge, da
   DT::datatable()
 
 #names(regdat)
+lm(log(Usage) ~ toolAge +simple_health_metrics*socialMedia, data = filter(regdat, toolAge >=3) ) %>% broom::tidy() %>% 
+  mutate(across(.cols = where(is.numeric), .fns = ~round(.x, digits = 5))) %>% 
+  DT::datatable()
+
 ```
-
-
-### Health Metrics
-
-
 
 ```{r CarriePlots, fig.height=8, fig.width=8}
 # Social Media
+
+regdat %<>% mutate(
+  socialMedia = factor(socialMedia, levels = c("Yes", "No")),
+  
+)
 d1 <- regdat %>% 
   ggplot(aes(x = releaseYear, y = log(Usage), col = socialMedia)) + 
   geom_point(aes(shape = socialMedia)) + 
-  geom_smooth(method = "lm", se = T) +
-  labs(x = "Release Year", y = "log(total Usage)", subtitle = "Scatterplot of log-Usage vs Release Year") +
-  theme_light() +coord_equal()
+  geom_smooth(method = "lm", se = T, alpha = 0.2) +
+  labs(x = "Release Year", y = "log(total Usage)", title = "Social Media Presence") +
+  theme_light() +coord_equal() + theme(legend.position = "bottom")
 
 ## DocuDepth
 d2 <- regdat %>%
   ggplot(aes(x = releaseYear, y = log(Usage), col = DocuDepth)) + 
   geom_point(aes(shape = DocuDepth)) + 
-  geom_smooth(method = "lm", se = T) +
-  labs(x = "Release Year", y = "log(total Usage)", subtitle = "Scatterplot of log-Usage vs Release Year") +
-  theme_light() +coord_equal()
+  geom_smooth(method = "lm", se = T, alpha = 0.2) +
+  labs(x = "Release Year", y = "log(total Usage)", title = "Documentation Depth") +
+  theme_light() +coord_equal() + theme(legend.position = "bottom")
 
 # extensiveContact
 d3 <- regdat %>% 
   ggplot(aes(x = releaseYear, y = log(Usage), col = extensiveContact)) + 
   geom_point(aes(shape = extensiveContact)) + 
-  geom_smooth(method = "lm", se = T) +
-  labs(x = "Release Year", y = "log(total Usage)", subtitle = "Scatterplot of log-Usage vs Release Year") +
-  theme_light() +coord_equal()
+  geom_smooth(method = "lm", se = T, alpha = 0.2) +
+  labs(x = "Release Year", y = "log(total Usage)", title = "Contact Depth") +
+  theme_light() +coord_equal() + theme(legend.position = "bottom")
 
-d1 / d2 / d3
+# CiteHow
+d4 <- regdat %>% 
+  ggplot(aes(x = releaseYear, y = log(Usage), col = citeHow)) + 
+  geom_point(aes(shape = citeHow)) + 
+  geom_smooth(method = "lm", se = T, alpha = 0.2) +
+  labs(x = "Release Year", y = "log(total Usage)", subtitle = "Information for citing") +
+  theme_light() +coord_equal() + theme(legend.position = "bottom")
+
+# health metrics
+d5 <- regdat %>% drop_na(simple_health_metrics) %>%
+  ggplot(aes(x = releaseYear, y = log(Usage), col = simple_health_metrics)) + 
+  geom_point(aes(shape = simple_health_metrics)) + 
+  geom_smooth(method = "lm", se = T, alpha = 0.2) +
+  labs(x = "Release Year", y = "log(total Usage)", title = "Presence of Software Health Metrics", subtitle = ("test coverage and build status badges")) +
+  theme_light() +coord_equal() + theme(legend.position = "bottom")
+
+(d1 + d2) / (d3 + d5)
 ```
 
 ```{r CarriePlots2, fig.height=8, fig.width=8}
@@ -557,39 +625,46 @@ d1 / d2 / d3
 d11 <- regdat %>% 
   ggplot(aes(x = releaseYear, y = log(totalMentions), col = socialMedia)) + 
   geom_point(aes(shape = socialMedia)) + 
-  geom_smooth(method = "lm", se = T) +
-  labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
-  theme_light() +coord_equal()
+  geom_smooth(method = "lm", se = T, alpha = 0.2) +
+  labs(x = "Release Year", y = "log(Ttotal Mentions)", title = "Social Media Presence") +
+  theme_light() +coord_equal() + theme(legend.position = "bottom")
 
 ## DocuDepth
 d22 <- regdat %>%
   ggplot(aes(x = releaseYear, y = log(totalMentions), col = DocuDepth)) + 
   geom_point(aes(shape = DocuDepth)) + 
-  geom_smooth(method = "lm", se = T) +
-  labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
-  theme_light() +coord_equal()
+  geom_smooth(method = "lm", se = T, alpha = 0.2) +
+  labs(x = "Release Year", y = "log(Total Mentions)", title = "Documentation Depth") +
+  theme_light() +coord_equal() + theme(legend.position = "bottom")
 
 # extensiveContact
 d33 <- regdat %>% 
   ggplot(aes(x = releaseYear, y = log(totalMentions), col = extensiveContact)) + 
   geom_point(aes(shape = extensiveContact)) + 
-  geom_smooth(method = "lm", se = T) +
-  labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
-  theme_light() +coord_equal()
+  geom_smooth(method = "lm", se = T, alpha = 0.2) +
+  labs(x = "Release Year", y = "log(Total Mentions)", title =  "Contact Depth") +
+  theme_light() +coord_equal() + theme(legend.position = "bottom")
 
-# healthmetrics
-d34 <- regdat %>% 
-  ggplot(aes(x = releaseYear, y = log(totalMentions), col = ownDOI)) + 
-  geom_point(aes(shape = ownDOI)) + 
-  geom_smooth(method = "lm", se = T) +
-  labs(x = "Release Year", y = "log(total totalMentions)", subtitle = "Scatterplot of log-totalMentions vs Release Year") +
-  theme_light() +coord_equal()
+# CiteHow
+d44 <- regdat %>% 
+  ggplot(aes(x = releaseYear, y = log(totalMentions), col = citeHow)) + 
+  geom_point(aes(shape = citeHow)) + 
+  geom_smooth(method = "lm", se = T, alpha = 0.2) +
+  labs(x = "Release Year", y = "log(Total Mentions)", subtitle = "Information on how to cite") +
+  theme_light() +coord_equal() + theme(legend.position = "bottom")
 
-d11 / d22 / d33
+d55<- regdat %>% drop_na(simple_health_metrics) %>%
+  ggplot(aes(x = releaseYear, y = log(totalMentions), col = simple_health_metrics)) + 
+  geom_point(aes(shape = simple_health_metrics)) + 
+  geom_smooth(method = "lm", se = T, alpha = 0.2) +
+  labs(x = "Release Year", y = "log(Total Mentions)", title = "Presence of Software Health Metrics", subtitle = ("test coverage and build status badges")) +
+  theme_light() +coord_equal() + theme(legend.position = "bottom")
+
+(d11 + d22) / (d33 + d55)
 ```
 
 ```{r}
-regdat %>% filter(toolAge < 12) %>% 
+regdat  %>% 
   ggplot(aes(x = toolAge)) +
   geom_histogram(aes(y = after_stat(density)), fill = "white", col = "darkgray", binwidth = 2) +
   geom_density(col = "steelblue2") +
